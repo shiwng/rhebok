@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PdfError {
-    #[error("`{path}` appears to be a scanned PDF with no reliable text layer; skipping (OCR not enabled)")]
+    #[error(
+        "`{path}` appears to be a scanned PDF with no reliable text layer; skipping ({})",
+        scanned_reason(*.ocr_attempted)
+    )]
     Scanned {
         path: String,
         /// Whether recognition was actually run against this file before it
@@ -27,6 +30,14 @@ pub enum PdfError {
     },
     #[error("`{path}` yielded no extractable text")]
     Empty { path: String },
+}
+
+fn scanned_reason(ocr_attempted: bool) -> &'static str {
+    if ocr_attempted {
+        "OCR ran and recovered no text"
+    } else {
+        "OCR has not run on it: it is off, waiting for the OCR pass, or was unavailable earlier in this run"
+    }
 }
 
 /// One page of final Markdown, whatever produced it.
@@ -259,6 +270,11 @@ fn disable_ocr(path: &Path, err: &dyn std::fmt::Display) {
     );
 }
 
+#[cfg(feature = "ocr")]
+fn turns_ocr_off_for_the_run(err: &pdf_inspector::vision::OcrPipelineError) -> bool {
+    !matches!(err, pdf_inspector::vision::OcrPipelineError::Pdf(_))
+}
+
 /// The DPI at which an A4 page renders past pdf-inspector's escalation
 /// threshold.
 ///
@@ -479,6 +495,13 @@ impl PdfLoader {
                 }
                 (Some(fused_to_extraction(&result)), true)
             }
+            Err(e) if !turns_ocr_off_for_the_run(&e) => {
+                eprintln!(
+                    "rhebok: {}: OCR could not read this file: {e}",
+                    path.display()
+                );
+                (None, true)
+            }
             Err(e) => {
                 disable_ocr(path, &e);
                 // Attempted, and failed. THIS document really was looked at,
@@ -576,6 +599,52 @@ mod tests {
             markdown: markdown.into(),
             ocr,
         }
+    }
+
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn a_document_that_cannot_be_read_does_not_turn_ocr_off_for_the_run() {
+        use pdf_inspector::vision::OcrPipelineError;
+        use pdf_inspector::PdfError as Unreadable;
+
+        for unreadable in [
+            Unreadable::Encrypted,
+            Unreadable::NotAPdf("file appears to be plain text".into()),
+            Unreadable::InvalidStructure,
+            Unreadable::Parse("bad object".into()),
+        ] {
+            let err = OcrPipelineError::Pdf(unreadable);
+            assert!(!turns_ocr_off_for_the_run(&err), "{err}");
+        }
+    }
+
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn an_engine_failure_still_turns_ocr_off_for_the_run() {
+        use pdf_inspector::vision::{OcrPipelineError, OcrRunError};
+
+        let err = OcrPipelineError::Run(OcrRunError::Ocr {
+            source: "OrtGetApiBase must be present".into(),
+        });
+        assert!(turns_ocr_off_for_the_run(&err));
+    }
+
+    #[test]
+    fn a_scanned_skip_says_whether_ocr_ran() {
+        let tried = PdfError::Scanned {
+            path: "a.pdf".into(),
+            ocr_attempted: true,
+        }
+        .to_string();
+        let skipped = PdfError::Scanned {
+            path: "a.pdf".into(),
+            ocr_attempted: false,
+        }
+        .to_string();
+
+        assert!(!tried.contains("not enabled"), "{tried}");
+        assert!(tried.contains("OCR ran"), "{tried}");
+        assert!(skipped.contains("OCR has not run"), "{skipped}");
     }
 
     #[test]

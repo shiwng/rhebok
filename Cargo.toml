@@ -96,6 +96,7 @@ opt-level = 3
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+rayon = "1.12"
 
 [[test]]
 name = "it"
@@ -152,3 +153,6 @@ path = "tests/transcript_settle.rs"
 [[test]]
 name = "update_notice"
 path = "tests/update_notice.rs"
+
+[patch.crates-io]
+pdf-inspector = { path = "vendor/pdf-inspector" }

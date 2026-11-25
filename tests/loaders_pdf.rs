@@ -168,6 +168,24 @@ fn ocr_fills_the_gap_in_a_mixed_pdf_without_renumbering() {
 
 #[test]
 #[ignore = "needs PDFium and ONNX Runtime installed"]
+fn ocr_recognizes_every_page_of_a_multi_page_scan_in_order() {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(load("scanned-six-pages.pdf", &ocr_ready()));
+    });
+
+    let doc = finished
+        .recv_timeout(std::time::Duration::from_secs(180))
+        .expect("recognition of a six-page scan never finished")
+        .unwrap();
+    let pages = doc.meta["pages"].as_array().unwrap();
+    let numbers: Vec<i64> = pages.iter().map(|p| p["page"].as_i64().unwrap()).collect();
+    assert_eq!(numbers, [1, 2, 3, 4, 5, 6]);
+    assert!(pages.iter().all(|p| p["ocr"] == true), "{pages:?}");
+}
+
+#[test]
+#[ignore = "needs PDFium and ONNX Runtime installed"]
 fn ocr_enabled_mode_does_not_perturb_a_text_pdf() {
     // NOT an OCR-success test: a text PDF short-circuits recognition either
     // way, so this passes whether or not PDFium and ONNX Runtime resolve.

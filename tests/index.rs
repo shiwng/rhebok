@@ -1154,28 +1154,32 @@ fn ocr_off_queues_no_backlog_for_a_fully_scanned_pdf() {
 /// next run restored it; the anti-retry stamp makes the deletion PERMANENT,
 /// recoverable only by `--reindex`.
 ///
-/// FORCING "never attempted" DETERMINISTICALLY, on any machine: load a file
-/// whose bytes are not a PDF with recognition ON. `process_pdf_with_ocr`
-/// fails on it — on a machine WITH the libraries because the bytes are
-/// garbage, on a machine without them because the dylib will not load — and
-/// either way `disable_ocr` latches. No environment variable is touched, so
-/// this races nothing else in the binary, and the latch only ever moves one
-/// way. The `!mixed.ocr_attempted` assertion below is the precondition check:
+/// FORCING "never attempted" DETERMINISTICALLY, on any machine: load a real
+/// PDF with recognition ON and `ocr_min_confidence` outside 0..=1.
+/// `process_pdf_with_ocr` refuses that setting before it renders anything, so
+/// it fails the same way with or without the libraries, and the failure is an
+/// engine error, not a problem with the file, so `disable_ocr` latches. A file
+/// that is not a PDF no longer works for this: it fails only itself. No
+/// environment variable is touched, so this races nothing else in the binary,
+/// and the latch only ever moves one way. The `!mixed.ocr_attempted` assertion below is the precondition check:
 /// it fails loudly rather than letting the real assertions pass vacuously.
 #[test]
 fn a_scanned_pdf_ocr_never_reached_is_neither_stamped_nor_pruned() {
-    let staging = tempfile::tempdir().unwrap();
-    let garbage = staging.path().join("garbage.pdf");
-    std::fs::write(&garbage, b"this is not a pdf at all, just bytes").unwrap();
-
     let ocr_on = rhebok::config::PdfConfig {
         ocr: rhebok::config::OcrMode::Auto,
         ..rhebok::config::PdfConfig::default()
     };
+    let engine_refuses = rhebok::config::PdfConfig {
+        ocr_min_confidence: 2.0,
+        ..ocr_on.clone()
+    };
 
-    // Trips the latch. Its own result is irrelevant — the file cannot load by
-    // any route — so it is deliberately not asserted on.
-    let _ = rhebok::loaders::pdf::PdfLoader::load_file_with(&garbage, &ocr_on);
+    // Trips the latch. Its own result is irrelevant, so it is deliberately not
+    // asserted on.
+    let _ = rhebok::loaders::pdf::PdfLoader::load_file_with(
+        std::path::Path::new("tests/fixtures/corpus/mixed.pdf"),
+        &engine_refuses,
+    );
 
     // Precondition, and the only observable the latch has from out here:
     // `Loaded::ocr_attempted` on a file that DOES load.

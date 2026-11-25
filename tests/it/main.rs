@@ -52,6 +52,8 @@ mod mcp_bundle;
 mod memory;
 mod memory_distill;
 mod migrate;
+#[cfg(feature = "ocr")]
+mod ocr_lanes;
 mod pack;
 mod plugin_launcher;
 mod plugin_manifest;
